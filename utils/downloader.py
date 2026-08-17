@@ -49,9 +49,9 @@ async def download_url(
     output = DOWNLOAD_DIR / filename
 
     timeout = aiohttp.ClientTimeout(
-        total=300,
-        connect=20,
-        sock_read=60,
+        total=None,
+        connect=30,
+        sock_read=300,
     )
 
     headers = {

@@ -15,6 +15,7 @@ from core.telegram import send_video
 from sources.x import get_x_videos
 from utils.downloader import download_url
 from utils.probe import probe_video
+from utils.splitter import split_video
 
 
 router = Router()
@@ -373,7 +374,9 @@ async def process_video(
         filename = f"x_{tweet_id}_{width}x{height}.mp4"
         caption = f"X video • {width}x{height}"
 
+    MAX_SPLIT_SIZE = int(1.95 * 1024 * 1024 * 1024)
     file_path = None
+    split_parts = []
 
     await update_progress(
         progress,
@@ -416,79 +419,117 @@ async def process_video(
         )
 
     try:
+        print(f"VIDEO URL: {video['url']}")
+
         file_path = await download_url(
             video["url"],
             filename,
             progress_callback=download_progress,
         )
 
-        await update_progress(
-            progress,
-            "📋 Membaca metadata video...",
-        )
+        actual_size = file_path.stat().st_size
 
-        meta = probe_video(file_path)
+        if actual_size > MAX_SPLIT_SIZE:
+            await update_progress(
+                progress,
+                "✂️ Video lebih besar dari 1.95 GiB.\n"
+                "Membagi video menjadi beberapa bagian...",
+            )
 
-        print(
-            f"VIDEO META: "
-            f"duration={meta['duration']}s, "
-            f"width={meta['width']}, "
-            f"height={meta['height']}"
-        )
+            split_dir = file_path.parent / f"{file_path.stem}_parts"
 
-        await update_progress(
-            progress,
-            f"📤 Upload {width}x{height}...\n"
-            f"Progress: 0%",
-        )
+            split_parts = split_video(
+                file_path,
+                split_dir,
+                MAX_SPLIT_SIZE,
+            )
 
-        last_upload_update = 0
-        upload_started = asyncio.get_running_loop().time()
+            upload_files = split_parts
+        else:
+            upload_files = [file_path]
 
-        async def upload_progress(
-            current: int,
-            total: int,
-        ):
-            nonlocal last_upload_update
+        total_parts = len(upload_files)
 
-            now = asyncio.get_running_loop().time()
-
-            if now - last_upload_update < 1:
-                return
-
-            last_upload_update = now
-
-            elapsed = max(now - upload_started, 0.001)
-            speed = current / elapsed
-
-            if total and total > 0:
-                percent = current * 100 / total
-                eta = format_eta((total - current) / speed) if speed > 0 else "--:--"
-
-                text = (
-                    f"📤 Upload {width}x{height}...\n\n"
-                    f"Progress:\n{percent:.1f}%\n\n"
-                    f"Speed:\n{format_speed(speed)}\n\n"
-                    f"ETA:\n{eta}"
-                )
+        for part_index, upload_file in enumerate(upload_files, start=1):
+            if total_parts > 1:
+                part_label = f" Part {part_index}/{total_parts}"
+                upload_caption = f"{caption} • Part {part_index}/{total_parts}"
             else:
-                text = (
-                    f"📤 Upload {width}x{height}...\n\n"
-                    f"Progress:\n{current / (1024 * 1024):.2f} MB"
-                )
+                part_label = ""
+                upload_caption = caption
 
             await update_progress(
                 progress,
-                text,
+                f"📋 Membaca metadata video{part_label}...",
             )
 
-        await send_video(
-            "@Sprdownloader_bot",
-            str(file_path),
-            caption=caption,
-            video_meta=meta,
-            progress_callback=upload_progress,
-        )
+            meta = probe_video(upload_file)
+
+            print(
+                f"VIDEO META{part_label}: "
+                f"duration={meta['duration']}s, "
+                f"width={meta['width']}, "
+                f"height={meta['height']}"
+            )
+
+            await update_progress(
+                progress,
+                f"📤 Upload{part_label} {width}x{height}...\n"
+                f"Progress: 0%",
+            )
+
+            last_upload_update = 0
+            upload_started = asyncio.get_running_loop().time()
+
+            async def upload_progress(
+                current: int,
+                total: int,
+            ):
+                nonlocal last_upload_update
+
+                now = asyncio.get_running_loop().time()
+
+                if now - last_upload_update < 1:
+                    return
+
+                last_upload_update = now
+
+                elapsed = max(now - upload_started, 0.001)
+                speed = current / elapsed
+
+                if total and total > 0:
+                    percent = current * 100 / total
+                    eta = (
+                        format_eta((total - current) / speed)
+                        if speed > 0
+                        else "--:--"
+                    )
+
+                    text = (
+                        f"📤 Upload{part_label} {width}x{height}...\n\n"
+                        f"Progress:\n{percent:.1f}%\n\n"
+                        f"Speed:\n{format_speed(speed)}\n\n"
+                        f"ETA:\n{eta}"
+                    )
+                else:
+                    text = (
+                        f"📤 Upload{part_label} {width}x{height}...\n\n"
+                        f"Progress:\n"
+                        f"{current / (1024 * 1024):.2f} MB"
+                    )
+
+                await update_progress(
+                    progress,
+                    text,
+                )
+
+            await send_video(
+                "@Sprdownloader_bot",
+                str(upload_file),
+                caption=upload_caption,
+                video_meta=meta,
+                progress_callback=upload_progress,
+            )
 
         await progress.delete()
 
@@ -506,3 +547,20 @@ async def process_video(
             except Exception:
                 pass
 
+        for part in split_parts:
+            try:
+                part.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if split_parts:
+            try:
+                thumbnail = split_parts[0].with_suffix(".jpg")
+                thumbnail.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+            try:
+                split_parts[0].parent.rmdir()
+            except Exception:
+                pass
