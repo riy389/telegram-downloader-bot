@@ -1,3 +1,4 @@
+from pathlib import Path
 import re
 import asyncio
 
@@ -11,7 +12,7 @@ from aiogram.types import (
 )
 
 from core.router import detect_source
-from core.telegram import send_video
+from core.telegram import send_video, download_telegram_media, get_telegram_user_id
 from sources.x import get_x_videos
 from utils.downloader import download_url
 from utils.probe import probe_video
@@ -24,6 +25,7 @@ URL_PATTERN = re.compile(r"https?://\S+")
 
 VIDEO_CACHE: dict[str, list[dict]] = {}
 RENAME_CACHE: dict[int, dict] = {}
+TELEGRAM_VIDEO_CACHE: dict[str, dict] = {}
 
 
 async def get_file_size(url: str) -> int | None:
@@ -98,6 +100,361 @@ async def update_progress(
         await message.edit_text(text)
     except Exception:
         pass
+
+
+@router.message(F.video | F.document)
+async def handle_telegram_video(message: Message):
+    media = message.video
+
+    if media is None and message.document:
+        if not (
+            message.document.mime_type
+            and message.document.mime_type.startswith("video/")
+        ):
+            return
+
+        media = message.document
+
+    if media is None:
+        return
+
+    # Jangan proses video yang dikirim kembali oleh akun Telethon.
+    if message.from_user:
+        telegram_user_id = get_telegram_user_id()
+
+        if (
+            telegram_user_id is not None
+            and message.from_user.id == telegram_user_id
+        ):
+            return
+
+        if message.from_user.is_bot:
+            return
+
+    cache_key = f"telegram:{message.chat.id}:{message.message_id}"
+
+    source_chat_id = None
+    source_message_id = None
+
+    if message.forward_origin:
+        origin = message.forward_origin
+
+        if hasattr(origin, "chat") and origin.chat:
+            source_chat_id = origin.chat.id
+
+        if hasattr(origin, "message_id"):
+            source_message_id = origin.message_id
+
+    TELEGRAM_VIDEO_CACHE[cache_key] = {
+        "chat_id": message.chat.id,
+        "message_id": message.message_id,
+        "source_chat_id": source_chat_id,
+        "source_message_id": source_message_id,
+        "file_name": media.file_name,
+        "file_size": media.file_size,
+    }
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✂️ Split Video",
+                    callback_data=f"tgsplit:{message.chat.id}:{message.message_id}",
+                )
+            ]
+        ]
+    )
+
+    size_text = format_size(media.file_size)
+
+    await message.answer(
+        f"Video diterima ({size_text}). Mau diapakan?",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("tgsplit:"))
+async def handle_telegram_split(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, chat_id_str, message_id_str = callback.data.split(":", 2)
+        chat_id = int(chat_id_str)
+        message_id = int(message_id_str)
+    except (ValueError, TypeError):
+        await callback.answer(
+            "Data video tidak valid.",
+            show_alert=True,
+        )
+        return
+
+    cache_key = f"telegram:{chat_id}:{message_id}"
+    video_info = TELEGRAM_VIDEO_CACHE.get(cache_key)
+
+    if not video_info:
+        await callback.answer(
+            "Data video sudah tidak tersedia. Kirim ulang videonya.",
+            show_alert=True,
+        )
+        return
+
+    source_chat_id = video_info.get("source_chat_id")
+    source_message_id = video_info.get("source_message_id")
+    original_file_name = video_info.get("file_name")
+
+    if source_chat_id is None or source_message_id is None:
+        await callback.answer(
+            "Pesan ini bukan forward channel yang bisa diambil ulang.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+
+    status_message = callback.message
+
+    if status_message:
+        await status_message.edit_text(
+            "⏬ Mengambil video dari Telegram via Telethon..."
+        )
+
+    MAX_SPLIT_SIZE = int(1.95 * 1024 * 1024 * 1024)
+
+    downloaded_path = None
+    split_parts = []
+
+    try:
+        download_dir = "/tmp/telegram_downloader/telegram_input"
+
+        last_download_update = 0
+        download_started = asyncio.get_running_loop().time()
+
+        async def download_progress(
+            current: int,
+            total: int | None,
+        ):
+            nonlocal last_download_update
+
+            now = asyncio.get_running_loop().time()
+
+            if now - last_download_update < 2:
+                return
+
+            last_download_update = now
+
+            elapsed = max(now - download_started, 0.001)
+            speed = current / elapsed
+
+            if total and total > 0:
+                percent = current * 100 / total
+
+                eta = (
+                    format_eta((total - current) / speed)
+                    if speed > 0
+                    else "--:--"
+                )
+
+                progress_text = (
+                    "⏬ Mengambil video dari Telegram...\n\n"
+                    f"Progress:\n{percent:.1f}%\n\n"
+                    f"Speed:\n{format_speed(speed)}\n\n"
+                    f"ETA:\n{eta}"
+                )
+            else:
+                progress_text = (
+                    "⏬ Mengambil video dari Telegram...\n\n"
+                    "Progress:\n"
+                    f"{current / (1024 * 1024):.2f} MB"
+                )
+
+            if status_message:
+                await update_progress(
+                    status_message,
+                    progress_text,
+                )
+
+        downloaded_path = await download_telegram_media(
+            chat_id=source_chat_id,
+            message_id=source_message_id,
+            output_dir=download_dir,
+            progress_callback=download_progress,
+        )
+
+        file_size = downloaded_path.stat().st_size
+
+        print(
+            f"TELEGRAM VIDEO: "
+            f"{downloaded_path.name} "
+            f"{format_size(file_size)}"
+        )
+
+        if file_size > MAX_SPLIT_SIZE:
+            if status_message:
+                await status_message.edit_text(
+                    "✂️ Video lebih besar dari 1.95 GiB.\n"
+                    "Membagi video menjadi beberapa bagian..."
+                )
+
+            split_dir = (
+                downloaded_path.parent
+                / f"{downloaded_path.stem}_parts"
+            )
+
+            split_parts = split_video(
+                downloaded_path,
+                split_dir,
+                MAX_SPLIT_SIZE,
+            )
+
+            upload_files = split_parts
+        else:
+            upload_files = [downloaded_path]
+
+        total_parts = len(upload_files)
+
+        base_name = (
+            Path(original_file_name).stem
+            if original_file_name
+            else downloaded_path.stem
+        )
+
+        for part_index, upload_file in enumerate(
+            upload_files,
+            start=1,
+        ):
+            if total_parts > 1:
+                part_label = f" Part {part_index}/{total_parts}"
+                upload_caption = (
+                    f"{base_name} • "
+                    f"Part {part_index}/{total_parts}"
+                )
+            else:
+                part_label = ""
+                upload_caption = base_name
+
+            if status_message:
+                await status_message.edit_text(
+                    f"📋 Membaca metadata video{part_label}..."
+                )
+
+            meta = probe_video(upload_file)
+
+            print(
+                f"TELEGRAM VIDEO META{part_label}: "
+                f"duration={meta['duration']}s, "
+                f"width={meta['width']}, "
+                f"height={meta['height']}"
+            )
+
+            if status_message:
+                await status_message.edit_text(
+                    f"📤 Upload{part_label}...\n"
+                    f"Progress: 0%"
+                )
+
+            last_upload_update = 0
+            upload_started = asyncio.get_running_loop().time()
+
+            async def upload_progress(
+                current: int,
+                total: int,
+            ):
+                nonlocal last_upload_update
+
+                now = asyncio.get_running_loop().time()
+
+                if now - last_upload_update < 1:
+                    return
+
+                last_upload_update = now
+
+                elapsed = max(now - upload_started, 0.001)
+                speed = current / elapsed
+
+                if total and total > 0:
+                    percent = current * 100 / total
+
+                    eta = (
+                        format_eta((total - current) / speed)
+                        if speed > 0
+                        else "--:--"
+                    )
+
+                    text = (
+                        f"📤 Upload{part_label}...\n\n"
+                        f"Progress:\n{percent:.1f}%\n\n"
+                        f"Speed:\n{format_speed(speed)}\n\n"
+                        f"ETA:\n{eta}"
+                    )
+                else:
+                    text = (
+                        f"📤 Upload{part_label}...\n\n"
+                        f"Progress:\n"
+                        f"{current / (1024 * 1024):.2f} MB"
+                    )
+
+                if status_message:
+                    await update_progress(
+                        status_message,
+                        text,
+                    )
+
+            await send_video(
+                "@Sprdownloader_bot",
+                str(upload_file),
+                caption=upload_caption,
+                video_meta=meta,
+                progress_callback=upload_progress,
+            )
+
+        if status_message:
+            await status_message.edit_text(
+                f"✅ Video Telegram selesai diproses.\n\n"
+                f"Total part: {total_parts}"
+            )
+
+    except Exception as exc:
+        if status_message:
+            await status_message.edit_text(
+                f"❌ Gagal memproses video Telegram.\n\n"
+                f"{type(exc).__name__}: {exc}"
+            )
+
+        print(
+            f"TELEGRAM VIDEO ERROR: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    finally:
+        if downloaded_path is not None:
+            try:
+                downloaded_path.unlink(missing_ok=True)
+            except Exception as exc:
+                print(
+                    f"TELEGRAM CLEANUP ORIGINAL ERROR: {exc}"
+                )
+
+        for part in split_parts:
+            try:
+                part.unlink(missing_ok=True)
+            except Exception as exc:
+                print(
+                    f"TELEGRAM CLEANUP PART ERROR: {exc}"
+                )
+
+        if split_parts:
+            split_dir = split_parts[0].parent
+
+            try:
+                split_dir.rmdir()
+            except Exception as exc:
+                print(
+                    f"TELEGRAM CLEANUP DIR ERROR: {exc}"
+                )
+
+        TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
 
 
 @router.message()
