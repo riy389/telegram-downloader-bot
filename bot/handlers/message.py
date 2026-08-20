@@ -161,7 +161,13 @@ async def handle_telegram_video(message: Message):
                     text="✂️ Split Video",
                     callback_data=f"tgsplit:{message.chat.id}:{message.message_id}",
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Cancel",
+                    callback_data=f"tgcancel:{message.chat.id}:{message.message_id}",
+                )
+            ],
         ]
     )
 
@@ -171,6 +177,41 @@ async def handle_telegram_video(message: Message):
         f"Video diterima ({size_text}). Mau diapakan?",
         reply_markup=keyboard,
     )
+
+
+@router.callback_query(F.data.startswith("tgcancel:"))
+async def handle_telegram_cancel(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, chat_id_str, message_id_str = callback.data.split(":", 2)
+        chat_id = int(chat_id_str)
+        message_id = int(message_id_str)
+    except (ValueError, TypeError):
+        await callback.answer(
+            "Data tidak valid.",
+            show_alert=True,
+        )
+        return
+
+    cache_key = f"telegram:{chat_id}:{message_id}"
+    video_info = TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
+
+    if not video_info:
+        await callback.answer(
+            "Data video sudah tidak tersedia.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer("Dibatalkan.")
+
+    if callback.message:
+        await callback.message.edit_text(
+            "❌ Operasi dibatalkan."
+        )
 
 
 @router.callback_query(F.data.startswith("tgsplit:"))
@@ -576,7 +617,13 @@ async def handle_x_video_choice(callback: CallbackQuery):
                     text="Rename",
                     callback_data=f"xrename:{tweet_id}:{index}",
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Cancel",
+                    callback_data=f"xcancel:{tweet_id}:{index}",
+                )
+            ],
         ]
     )
 
@@ -585,6 +632,41 @@ async def handle_x_video_choice(callback: CallbackQuery):
         "Pilih nama file:",
         reply_markup=keyboard,
     )
+
+
+@router.callback_query(F.data.startswith("xcancel:"))
+async def handle_x_cancel(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, tweet_id, index_text = callback.data.split(":", 2)
+        index = int(index_text)
+    except (ValueError, TypeError):
+        await callback.answer(
+            "Data tidak valid.",
+            show_alert=True,
+        )
+        return
+
+    videos = VIDEO_CACHE.get(tweet_id)
+
+    if not videos or index < 0 or index >= len(videos):
+        await callback.answer(
+            "Video sudah tidak tersedia.",
+            show_alert=True,
+        )
+        return
+
+    VIDEO_CACHE.pop(tweet_id, None)
+
+    await callback.answer("Dibatalkan.")
+
+    if callback.message:
+        await callback.message.edit_text(
+            "❌ Operasi dibatalkan."
+        )
 
 
 @router.callback_query(F.data.startswith("xdefault:"))
