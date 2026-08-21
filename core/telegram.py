@@ -183,11 +183,16 @@ async def _parallel_download_telegram_document(
         nonlocal downloaded
 
         sender = None
+        borrowed_sender = False
 
         try:
-            sender = await client._borrow_exported_sender(
-                document.dc_id
-            )
+            if document.dc_id == client.session.dc_id:
+                sender = client._sender
+            else:
+                sender = await client._borrow_exported_sender(
+                    document.dc_id
+                )
+                borrowed_sender = True
 
             offset = worker_id * REQUEST_SIZE
 
@@ -248,7 +253,7 @@ async def _parallel_download_telegram_document(
                     offset += WORKERS * REQUEST_SIZE
 
         finally:
-            if sender is not None:
+            if borrowed_sender and sender is not None:
                 await client._return_exported_sender(sender)
 
     await asyncio.gather(

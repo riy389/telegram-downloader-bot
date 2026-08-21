@@ -104,6 +104,15 @@ async def update_progress(
 
 @router.message(F.video | F.document)
 async def handle_telegram_video(message: Message):
+    print(
+        f"STEP32 DEBUG: "
+        f"video={message.video is not None}, "
+        f"document={message.document is not None}, "
+        f"mime={message.document.mime_type if message.document else None}, "
+        f"from_user={message.from_user.id if message.from_user else None}, "
+        f"origin={type(message.forward_origin).__name__ if message.forward_origin else None}"
+    )
+
     media = message.video
 
     if media is None and message.document:
@@ -119,12 +128,15 @@ async def handle_telegram_video(message: Message):
         return
 
     # Jangan proses video yang dikirim kembali oleh akun Telethon.
+    # Forwarded messages dari channel tetap harus diproses, meskipun
+    # from_user.id sama dengan akun Telethon yang digunakan bot.
     if message.from_user:
         telegram_user_id = get_telegram_user_id()
 
         if (
             telegram_user_id is not None
             and message.from_user.id == telegram_user_id
+            and message.forward_origin is None
         ):
             return
 
