@@ -188,6 +188,12 @@ async def upload_file(
     file_path,
     caption=None,
 ):
+    client = await connect_telegram_user()
+
+    if isinstance(target, str) and target.startswith("-100"):
+        target = await client.get_entity(int(target[4:]))
+        target = await client.get_input_entity(target)
+
     print()
     print(
         f"⬆️ Upload ke {target}"
@@ -286,6 +292,8 @@ async def process_message(
                 f"⚠️ File dipertahankan untuk retry: "
                 f"{file_path}"
             )
+
+        raise
 
 
 async def run_single(

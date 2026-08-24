@@ -12,11 +12,16 @@ from aiogram.types import (
 )
 
 from core.router import detect_source
-from core.telegram import send_video, download_telegram_media, get_telegram_user_id
+from core.telegram import send_video, download_telegram_media, get_telegram_user_id, connect_telegram_user
 from sources.x import get_x_videos
 from utils.downloader import download_url
 from utils.probe import probe_video
 from utils.splitter import split_video
+from tools.telegram_channel_downloader import (
+    parse_source_url,
+    run_single,
+    run_range,
+)
 
 
 router = Router()
@@ -26,6 +31,7 @@ URL_PATTERN = re.compile(r"https?://\S+")
 VIDEO_CACHE: dict[str, list[dict]] = {}
 RENAME_CACHE: dict[int, dict] = {}
 TELEGRAM_VIDEO_CACHE: dict[str, dict] = {}
+TELEGRAM_LINK_CACHE: dict[int, dict] = {}
 
 
 async def get_file_size(url: str) -> int | None:
@@ -510,11 +516,196 @@ async def handle_telegram_split(callback: CallbackQuery):
         TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
 
 
+@router.callback_query(F.data.startswith("tgsource:"))
+async def handle_telegram_source_choice(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, action, user_id_text = callback.data.split(":", 2)
+        user_id = int(user_id_text)
+    except (ValueError, TypeError):
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    if callback.from_user is None or callback.from_user.id != user_id:
+        await callback.answer(
+            "Menu ini bukan milik Anda.",
+            show_alert=True,
+        )
+        return
+
+    state = TELEGRAM_LINK_CACHE.get(user_id)
+    if not state:
+        await callback.answer(
+            "Sesi Telegram sudah tidak tersedia.",
+            show_alert=True,
+        )
+        return
+
+    if action == "download":
+        state["stage"] = "download_target"
+        await callback.answer()
+
+        if callback.message:
+            await callback.message.edit_text(
+                "📥 Mode Download dipilih.\n\n"
+                "Masukkan channel tujuan.\n"
+                "Contoh:\n"
+                "-1002026375610"
+            )
+        return
+
+    if action == "range":
+        state["stage"] = "range_to"
+        await callback.answer()
+
+        if callback.message:
+            await callback.message.edit_text(
+                "📚 Mode Range dipilih.\n\n"
+                "FROM sudah menggunakan link pertama.\n\n"
+                "Masukkan link Telegram untuk TO."
+            )
+        return
+
+    await callback.answer(
+        "Pilihan tidak valid.",
+        show_alert=True,
+    )
+
+
+@router.callback_query(F.data.startswith("tgsourcecancel:"))
+async def handle_telegram_source_cancel(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, user_id_text = callback.data.split(":", 1)
+        user_id = int(user_id_text)
+    except (ValueError, TypeError):
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    if callback.from_user is None or callback.from_user.id != user_id:
+        await callback.answer(
+            "Menu ini bukan milik Anda.",
+            show_alert=True,
+        )
+        return
+
+    TELEGRAM_LINK_CACHE.pop(user_id, None)
+
+    await callback.answer("Dibatalkan.")
+
+    if callback.message:
+        await callback.message.edit_text(
+            "❌ Operasi dibatalkan."
+        )
+
+
 @router.message()
 async def handle_message(message: Message):
-    text = message.text or ""
+    text = (message.text or "").strip()
 
-    if message.from_user and message.from_user.id in RENAME_CACHE:
+    user_id = message.from_user.id if message.from_user else None
+
+    if user_id and user_id in TELEGRAM_LINK_CACHE:
+        state = TELEGRAM_LINK_CACHE[user_id]
+        stage = state.get("stage")
+
+        if stage == "download_target":
+            target = text
+
+            if not target.startswith("-100"):
+                await message.reply(
+                    "❌ Channel tujuan tidak valid.\n\n"
+                    "Contoh:\n"
+                    "-1002026375610"
+                )
+                return
+
+            TELEGRAM_LINK_CACHE.pop(user_id, None)
+
+            progress = await message.reply(
+                "⏬ Memulai download Telegram..."
+            )
+
+            try:
+                client = await connect_telegram_user()
+                await run_single(
+                    client,
+                    state["source_url"],
+                    target,
+                    None,
+                )
+                await progress.edit_text(
+                    "✅ Telegram download selesai."
+                )
+            except Exception as exc:
+                await progress.edit_text(
+                    "❌ Gagal memproses Telegram.\n\n"
+                    f"{type(exc).__name__}: {exc}"
+                )
+            return
+
+        if stage == "range_to":
+            try:
+                parse_source_url(text)
+            except ValueError:
+                await message.reply(
+                    "❌ Link Telegram TO tidak valid."
+                )
+                return
+
+            state["to_url"] = text
+            state["stage"] = "range_target"
+
+            await message.reply(
+                "🎯 Masukkan channel tujuan.\n\n"
+                "Contoh:\n"
+                "-1002026375610"
+            )
+            return
+
+        if stage == "range_target":
+            target = text
+
+            if not target.startswith("-100"):
+                await message.reply(
+                    "❌ Channel tujuan tidak valid.\n\n"
+                    "Contoh:\n"
+                    "-1002026375610"
+                )
+                return
+
+            TELEGRAM_LINK_CACHE.pop(user_id, None)
+
+            progress = await message.reply(
+                "🔎 Menyiapkan Telegram range..."
+            )
+
+            try:
+                client = await connect_telegram_user()
+                await run_range(
+                    client,
+                    state["source_url"],
+                    state["to_url"],
+                    target,
+                    None,
+                )
+                await progress.edit_text(
+                    "✅ Telegram range selesai."
+                )
+            except Exception as exc:
+                await progress.edit_text(
+                    "❌ Gagal memproses Telegram range.\n\n"
+                    f"{type(exc).__name__}: {exc}"
+                )
+            return
+
+    if user_id and user_id in RENAME_CACHE:
         await handle_rename(message)
         return
 
@@ -524,6 +715,52 @@ async def handle_message(message: Message):
         return
 
     url = match.group(0)
+
+    if url.startswith(("https://t.me/", "http://t.me/")):
+        try:
+            parse_source_url(url)
+        except ValueError:
+            await message.reply(
+                "❌ URL Telegram tidak valid."
+            )
+            return
+
+        if user_id is None:
+            return
+
+        TELEGRAM_LINK_CACHE[user_id] = {
+            "source_url": url,
+            "stage": "choice",
+        }
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📥 Download",
+                        callback_data=f"tgsource:download:{user_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="📚 Range",
+                        callback_data=f"tgsource:range:{user_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="❌ Cancel",
+                        callback_data=f"tgsource:cancel:{user_id}",
+                    ),
+                ],
+            ]
+        )
+
+        await message.reply(
+            "🔗 Link Telegram terdeteksi.\n\n"
+            "Pilih operasi:",
+            reply_markup=keyboard,
+        )
+        return
+
     source = detect_source(url)
 
     if source != "x":
