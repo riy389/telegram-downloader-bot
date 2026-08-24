@@ -53,9 +53,15 @@ def split_video(
     if file_size <= max_size_bytes:
         return [input_path]
 
+    # Keep a safety margin below the Telegram upload limit.
+    # With stream-copy segmentation, actual part sizes can vary because
+    # cuts happen on keyframes. Target ~1.70 GiB when the handler limit
+    # is 1.80 GiB.
+    safe_max_size_bytes = int(max_size_bytes * 0.9444444444)
+
     estimated_parts = max(
         2,
-        (file_size + max_size_bytes - 1) // max_size_bytes,
+        (file_size + safe_max_size_bytes - 1) // safe_max_size_bytes,
     )
 
     part_duration = duration / estimated_parts

@@ -273,7 +273,7 @@ async def handle_telegram_split(callback: CallbackQuery):
             "⏬ Mengambil video dari Telegram via Telethon..."
         )
 
-    MAX_SPLIT_SIZE = int(1.95 * 1024 * 1024 * 1024)
+    MAX_SPLIT_SIZE = int(1.80 * 1024 * 1024 * 1024)
 
     downloaded_path = None
     split_parts = []
@@ -825,7 +825,7 @@ async def process_video(
         filename = f"x_{tweet_id}_{width}x{height}.mp4"
         caption = f"X video • {width}x{height}"
 
-    MAX_SPLIT_SIZE = int(1.95 * 1024 * 1024 * 1024)
+    MAX_SPLIT_SIZE = int(1.80 * 1024 * 1024 * 1024)
     file_path = None
     split_parts = []
 

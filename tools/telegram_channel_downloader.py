@@ -352,7 +352,7 @@ async def run_range(
         to_url
     )
 
-    if from_channel.lower() != to_channel.lower():
+    if str(from_channel).lower() != str(to_channel).lower():
         raise ValueError(
             "--from dan --to harus berasal "
             "dari channel yang sama."
