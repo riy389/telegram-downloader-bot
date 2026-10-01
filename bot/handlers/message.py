@@ -12,7 +12,8 @@ from aiogram.types import (
 )
 
 from core.router import detect_source
-from core.telegram import send_video, download_telegram_media, get_telegram_user_id, connect_telegram_user
+from core.telegram import send_video, download_telegram_media, get_telegram_user_id
+from core.telegram_sessions import connect_telegram_user
 from sources.x import get_x_videos
 from utils.downloader import download_url
 from utils.probe import probe_video
