@@ -19,6 +19,20 @@ SESSION_PATH = BASE_DIR / "telegram_user"
 _client: TelegramClient | None = None
 _telegram_user_id: int | None = None
 
+_INTERNAL_UPLOADS: set[tuple[int, int]] = set()
+
+
+def mark_internal_upload(chat_id: int, message_id: int) -> None:
+    _INTERNAL_UPLOADS.add((chat_id, message_id))
+
+
+def consume_internal_upload(chat_id: int, message_id: int) -> bool:
+    key = (chat_id, message_id)
+    if key not in _INTERNAL_UPLOADS:
+        return False
+    _INTERNAL_UPLOADS.remove(key)
+    return True
+
 
 def get_telegram_client() -> TelegramClient:
     global _client
@@ -104,7 +118,7 @@ async def send_video(
         except Exception:
             thumb_path = None
 
-        return await client.send_file(
+        sent_message = await client.send_file(
             chat_id,
             file_path,
             caption=caption,
@@ -113,6 +127,14 @@ async def send_video(
             progress_callback=progress_callback,
             thumb=str(thumb_path) if thumb_path else None,
         )
+
+        if sent_message is not None:
+            mark_internal_upload(
+                sent_message.chat_id,
+                sent_message.id,
+            )
+
+        return sent_message
 
     finally:
         if thumb_path is not None:

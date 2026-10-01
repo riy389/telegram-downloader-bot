@@ -12,7 +12,11 @@ from aiogram.types import (
 )
 
 from core.router import detect_source
-from core.telegram import send_video, download_telegram_media, get_telegram_user_id
+from core.telegram import (
+    send_video,
+    download_telegram_media,
+    consume_internal_upload,
+)
 from core.telegram_sessions import connect_telegram_user
 from sources.x import get_x_videos
 from utils.downloader import download_url
@@ -134,21 +138,14 @@ async def handle_telegram_video(message: Message):
     if media is None:
         return
 
-    # Jangan proses video yang dikirim kembali oleh akun Telethon.
-    # Forwarded messages dari channel tetap harus diproses, meskipun
-    # from_user.id sama dengan akun Telethon yang digunakan bot.
-    if message.from_user:
-        telegram_user_id = get_telegram_user_id()
+    if consume_internal_upload(
+        message.chat.id,
+        message.message_id,
+    ):
+        return
 
-        if (
-            telegram_user_id is not None
-            and message.from_user.id == telegram_user_id
-            and message.forward_origin is None
-        ):
-            return
-
-        if message.from_user.is_bot:
-            return
+    if message.from_user and message.from_user.is_bot:
+        return
 
     cache_key = f"telegram:{message.chat.id}:{message.message_id}"
 
