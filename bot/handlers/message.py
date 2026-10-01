@@ -273,6 +273,9 @@ async def handle_telegram_split(callback: CallbackQuery):
 
     await callback.answer()
 
+    user_id = callback.from_user.id
+    client = await connect_telegram_user(user_id)
+
     status_message = callback.message
 
     if status_message:
@@ -340,6 +343,7 @@ async def handle_telegram_split(callback: CallbackQuery):
             message_id=source_message_id,
             output_dir=download_dir,
             progress_callback=download_progress,
+            client=client,
         )
 
         file_size = downloaded_path.stat().st_size
@@ -467,6 +471,7 @@ async def handle_telegram_split(callback: CallbackQuery):
                 caption=upload_caption,
                 video_meta=meta,
                 progress_callback=upload_progress,
+                client=client,
             )
 
         if status_message:
