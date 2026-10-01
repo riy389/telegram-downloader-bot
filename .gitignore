@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 
 telegram_user.session
+telegram_sessions/
