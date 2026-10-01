@@ -9,7 +9,7 @@ sys.path.insert(
     str(Path(__file__).resolve().parent.parent),
 )
 
-from telethon.tl.types import DocumentAttributeVideo
+from telethon.tl.types import DocumentAttributeVideo, PeerChannel
 
 from core.telegram import (
     connect_telegram_user,
@@ -193,8 +193,9 @@ async def upload_file(
         client = await connect_telegram_user()
 
     if isinstance(target, str) and target.startswith("-100"):
-        target = await client.get_entity(int(target[4:]))
-        target = await client.get_input_entity(target)
+        target = await client.get_input_entity(
+            PeerChannel(int(target[4:]))
+        )
 
     print()
     print(
