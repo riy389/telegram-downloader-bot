@@ -951,6 +951,7 @@ async def handle_default_choice(callback: CallbackQuery):
         tweet_id,
         index,
         None,
+        callback.from_user.id,
     )
 
 
@@ -1031,6 +1032,7 @@ async def handle_rename(message: Message):
         data["tweet_id"],
         data["index"],
         name,
+        message.from_user.id,
     )
 
 
@@ -1039,7 +1041,10 @@ async def process_video(
     tweet_id: str,
     index: int,
     custom_name: str | None,
+    user_id: int,
 ):
+    client = await connect_telegram_user(user_id)
+
     videos = VIDEO_CACHE.get(tweet_id)
 
     if not videos or index < 0 or index >= len(videos):
@@ -1217,6 +1222,7 @@ async def process_video(
                 caption=upload_caption,
                 video_meta=meta,
                 progress_callback=upload_progress,
+                client=client,
             )
 
         await progress.delete()
