@@ -19,15 +19,23 @@ SESSION_PATH = BASE_DIR / "telegram_user"
 _client: TelegramClient | None = None
 _telegram_user_id: int | None = None
 
-_INTERNAL_UPLOADS: set[tuple[int, int]] = set()
+_INTERNAL_UPLOADS: set[tuple[int, int, int]] = set()
 
 
-def mark_internal_upload(chat_id: int, message_id: int) -> None:
-    _INTERNAL_UPLOADS.add((chat_id, message_id))
+def mark_internal_upload(
+    chat_id: int,
+    user_id: int,
+    file_size: int,
+) -> None:
+    _INTERNAL_UPLOADS.add((chat_id, user_id, file_size))
 
 
-def consume_internal_upload(chat_id: int, message_id: int) -> bool:
-    key = (chat_id, message_id)
+def consume_internal_upload(
+    chat_id: int,
+    user_id: int,
+    file_size: int,
+) -> bool:
+    key = (chat_id, user_id, file_size)
     if key not in _INTERNAL_UPLOADS:
         return False
     _INTERNAL_UPLOADS.remove(key)
@@ -118,23 +126,46 @@ async def send_video(
         except Exception:
             thumb_path = None
 
-        sent_message = await client.send_file(
-            chat_id,
-            file_path,
-            caption=caption,
-            attributes=attributes,
-            supports_streaming=True,
-            progress_callback=progress_callback,
-            thumb=str(thumb_path) if thumb_path else None,
-        )
-
-        if sent_message is not None:
-            mark_internal_upload(
-                sent_message.chat_id,
-                sent_message.id,
+        me = await client.get_me()
+        if me is None:
+            raise RuntimeError(
+                "Tidak dapat mengetahui akun Telegram MTProto."
             )
 
-        return sent_message
+        destination_chat_id = await client.get_peer_id(chat_id)
+        file_size = Path(file_path).stat().st_size
+
+        mark_internal_upload(
+            destination_chat_id,
+            me.id,
+            file_size,
+        )
+
+        try:
+            result_caption = (
+                f"{caption}\nsprdownloader"
+                if caption
+                else "sprdownloader"
+            )
+
+            return await client.send_file(
+                chat_id,
+                file_path,
+                caption=result_caption,
+                attributes=attributes,
+                supports_streaming=True,
+                progress_callback=progress_callback,
+                thumb=str(thumb_path) if thumb_path else None,
+            )
+        except Exception:
+            _INTERNAL_UPLOADS.discard(
+                (
+                    destination_chat_id,
+                    me.id,
+                    file_size,
+                )
+            )
+            raise
 
     finally:
         if thumb_path is not None:

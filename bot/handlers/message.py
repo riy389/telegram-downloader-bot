@@ -138,13 +138,21 @@ async def handle_telegram_video(message: Message):
     if media is None:
         return
 
-    if consume_internal_upload(
-        message.chat.id,
-        message.message_id,
-    ):
+    if message.caption and "sprdownloader" in message.caption:
         return
 
     if message.from_user and message.from_user.is_bot:
+        return
+
+    if (
+        message.from_user
+        and media.file_size
+        and consume_internal_upload(
+            message.chat.id,
+            message.from_user.id,
+            media.file_size,
+        )
+    ):
         return
 
     cache_key = f"telegram:{message.chat.id}:{message.message_id}"
