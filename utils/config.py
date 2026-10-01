@@ -5,5 +5,10 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+ALLOWED_USER_IDS = {
+    int(user_id.strip())
+    for user_id in os.getenv("ALLOWED_USER_IDS", "").split(",")
+    if user_id.strip()
+}
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 BOT_MODE = os.getenv("BOT_MODE", "development").lower()
