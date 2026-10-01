@@ -165,6 +165,7 @@ async def handle_telegram_video(message: Message):
             source_message_id = origin.message_id
 
     TELEGRAM_VIDEO_CACHE[cache_key] = {
+        "user_id": message.from_user.id if message.from_user else None,
         "chat_id": message.chat.id,
         "message_id": message.message_id,
         "source_chat_id": source_chat_id,
@@ -216,7 +217,7 @@ async def handle_telegram_cancel(callback: CallbackQuery):
         return
 
     cache_key = f"telegram:{chat_id}:{message_id}"
-    video_info = TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
+    video_info = TELEGRAM_VIDEO_CACHE.get(cache_key)
 
     if not video_info:
         await callback.answer(
@@ -224,6 +225,16 @@ async def handle_telegram_cancel(callback: CallbackQuery):
             show_alert=True,
         )
         return
+
+    owner_user_id = video_info.get("user_id")
+    if callback.from_user is None or callback.from_user.id != owner_user_id:
+        await callback.answer(
+            "Menu ini bukan milik Anda.",
+            show_alert=True,
+        )
+        return
+
+    TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
 
     await callback.answer("Dibatalkan.")
 
@@ -256,6 +267,14 @@ async def handle_telegram_split(callback: CallbackQuery):
     if not video_info:
         await callback.answer(
             "Data video sudah tidak tersedia. Kirim ulang videonya.",
+            show_alert=True,
+        )
+        return
+
+    owner_user_id = video_info.get("user_id")
+    if callback.from_user is None or callback.from_user.id != owner_user_id:
+        await callback.answer(
+            "Menu ini bukan milik Anda.",
             show_alert=True,
         )
         return
