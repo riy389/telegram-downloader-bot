@@ -633,7 +633,7 @@ async def handle_message(message: Message):
             )
 
             try:
-                client = await connect_telegram_user()
+                client = await connect_telegram_user(message.from_user.id)
                 await run_single(
                     client,
                     state["source_url"],
@@ -687,7 +687,7 @@ async def handle_message(message: Message):
             )
 
             try:
-                client = await connect_telegram_user()
+                client = await connect_telegram_user(message.from_user.id)
                 await run_range(
                     client,
                     state["source_url"],
