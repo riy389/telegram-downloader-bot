@@ -187,8 +187,10 @@ async def upload_file(
     target,
     file_path,
     caption=None,
+    client=None,
 ):
-    client = await connect_telegram_user()
+    if client is None:
+        client = await connect_telegram_user()
 
     if isinstance(target, str) and target.startswith("-100"):
         target = await client.get_entity(int(target[4:]))
@@ -238,6 +240,7 @@ async def upload_file(
         caption=caption,
         video_meta=video_meta,
         progress_callback=progress,
+        client=client,
     )
 
     print()
@@ -270,6 +273,7 @@ async def process_message(
             target,
             file_path,
             caption=message.message or None,
+            client=client,
         )
 
         file_path.unlink(
