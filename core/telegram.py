@@ -79,8 +79,10 @@ async def send_video(
     caption: str | None = None,
     video_meta: dict | None = None,
     progress_callback=None,
+    client: TelegramClient | None = None,
 ):
-    client = await connect_telegram_user()
+    if client is None:
+        client = await connect_telegram_user()
 
     attributes = None
 
@@ -290,6 +292,7 @@ async def download_telegram_media(
     message_id: int,
     output_dir: str | Path,
     progress_callback=None,
+    client: TelegramClient | None = None,
 ) -> Path:
     """
     Download media from the original Telegram message using Telethon.
@@ -301,7 +304,8 @@ async def download_telegram_media(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    client = await connect_telegram_user()
+    if client is None:
+        client = await connect_telegram_user()
 
     message = await client.get_messages(
         chat_id,
