@@ -189,6 +189,12 @@ async def handle_telegram_video(message: Message):
             ],
             [
                 InlineKeyboardButton(
+                    text="▶️ Upload YouTube",
+                    callback_data=f"tgyoutube:{message.chat.id}:{message.message_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="❌ Cancel",
                     callback_data=f"tgcancel:{message.chat.id}:{message.message_id}",
                 )
@@ -542,6 +548,107 @@ async def handle_telegram_split(callback: CallbackQuery):
                 print(
                     f"TELEGRAM CLEANUP DIR ERROR: {exc}"
                 )
+
+        TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
+
+
+
+@router.callback_query(F.data.startswith("tgyoutube:"))
+async def handle_telegram_youtube_upload(callback: CallbackQuery):
+    if not callback.data:
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    try:
+        _, chat_id_text, message_id_text = callback.data.split(":", 2)
+        chat_id = int(chat_id_text)
+        message_id = int(message_id_text)
+    except (ValueError, TypeError):
+        await callback.answer("Data tidak valid.", show_alert=True)
+        return
+
+    cache_key = f"telegram:{chat_id}:{message_id}"
+    video_info = TELEGRAM_VIDEO_CACHE.get(cache_key)
+
+    if not video_info:
+        await callback.answer(
+            "Data video sudah tidak tersedia. Kirim ulang videonya.",
+            show_alert=True,
+        )
+        return
+
+    if (
+        callback.from_user is None
+        or callback.from_user.id != video_info.get("user_id")
+    ):
+        await callback.answer("Menu ini bukan milik Anda.", show_alert=True)
+        return
+
+    source_chat_id = video_info.get("source_chat_id")
+    source_message_id = video_info.get("source_message_id")
+
+    if source_chat_id is None or source_message_id is None:
+        await callback.answer(
+            "Pesan ini bukan forward channel yang bisa diambil ulang.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    status = callback.message
+    downloaded_path = None
+
+    try:
+        if status:
+            await status.edit_text("⏬ Mengunduh video asli dari Telegram...")
+
+        client = await connect_telegram_user(callback.from_user.id)
+
+        downloaded_path = await download_telegram_media(
+            chat_id=source_chat_id,
+            message_id=source_message_id,
+            output_dir="/tmp/telegram_downloader/youtube_upload",
+            client=client,
+        )
+
+        title = Path(
+            video_info.get("file_name") or downloaded_path.name
+        ).stem.strip()
+        title = title[:100] or "Telegram video"
+
+        if status:
+            await status.edit_text(
+                "📤 Mengunggah video utuh ke YouTube sebagai Private..."
+            )
+
+        from utils.youtube_upload import upload_video
+
+        url = await upload_video(downloaded_path, title)
+
+        if status:
+            await status.edit_text(
+                f"✅ Upload YouTube berhasil.\n\n"
+                f"Privasi: Private\n"
+                f"URL: {url}"
+            )
+
+    except Exception as exc:
+        print(f"YOUTUBE UPLOAD ERROR: {type(exc).__name__}: {exc}")
+        if status:
+            try:
+                await status.edit_text(
+                    "❌ Upload YouTube gagal.\n\n"
+                    f"{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                pass
+
+    finally:
+        if downloaded_path is not None:
+            try:
+                downloaded_path.unlink(missing_ok=True)
+            except Exception as exc:
+                print(f"YOUTUBE CLEANUP ERROR: {exc}")
 
         TELEGRAM_VIDEO_CACHE.pop(cache_key, None)
 
