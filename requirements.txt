@@ -4,3 +4,5 @@ yt-dlp
 aiohttp
 
 Telethon==1.44.0
+google-api-python-client
+google-auth
